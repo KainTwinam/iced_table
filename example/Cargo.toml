@@ -5,4 +5,11 @@ edition = "2021"
 
 [dependencies]
 iced_table = { path = "../" }
-iced = { version = "0.13", features = ["lazy"] }
+iced = { version = "0.14.0-dev", features = [
+    "lazy",
+    "debug",
+    "advanced",
+] }
+
+[patch.crates-io]
+iced = { git = "https://github.com/iced-rs/iced", rev = "aa633f6832c93d81fc829bcd351b369f0aada282" }

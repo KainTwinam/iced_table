@@ -8,7 +8,8 @@ use iced::{Element, Length, Renderer, Task, Theme};
 use iced_table::table;
 
 fn main() {
-    iced::application(App::title, App::update, App::view)
+    iced::application(App::new, App::update, App::view)
+        .title(App::title)
         .theme(App::theme)
         .run()
         .unwrap()
@@ -70,6 +71,10 @@ impl App {
 
     fn theme(&self) -> Theme {
         self.theme.clone()
+    }
+
+    fn new() -> Self { 
+        App::default() 
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {

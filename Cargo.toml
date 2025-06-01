@@ -16,12 +16,15 @@ members = [
   "./example",
 ]
 
-[features]
-__docs = ["iced_widget/lazy"]
-
 [dependencies]
-iced_core = "0.13"
-iced_widget = "0.13"
+iced = { version = "0.14.0-dev", features = [
+    "lazy",
+    "debug",
+    "advanced",
+] }
 
 [package.metadata.docs.rs]
 all-features = true
+
+[patch.crates-io]
+iced = { git = "https://github.com/iced-rs/iced", rev = "aa633f6832c93d81fc829bcd351b369f0aada282" }

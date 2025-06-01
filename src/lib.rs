@@ -8,8 +8,8 @@ mod style;
 
 pub mod table {
     //! Display rows of data into columns
-    use iced_core::{Element, Length, Padding};
-    use iced_widget::{column, container, row, scrollable, Space};
+    use iced::{Element, Length, Padding};
+    use iced::widget::{column, container, row, scrollable, Space};
 
     use super::divider::Divider;
     use super::style;
@@ -183,7 +183,7 @@ pub mod table {
     impl<'a, Column, Row, Message, Theme, Renderer> From<Table<'a, Column, Row, Message, Theme>>
         for Element<'a, Message, Theme, Renderer>
     where
-        Renderer: iced_core::Renderer + 'a,
+        Renderer: iced::advanced::Renderer + 'a,
         Theme: style::Catalog + container::Catalog + scrollable::Catalog + 'a,
         Column: self::Column<'a, Message, Theme, Renderer, Row = Row>,
         Message: 'a + Clone,
@@ -326,7 +326,7 @@ pub mod table {
         style: <Theme as style::Catalog>::Style,
     ) -> Element<'a, Message, Theme, Renderer>
     where
-        Renderer: iced_core::Renderer + 'a,
+        Renderer: iced::advanced::Renderer + 'a,
         Theme: style::Catalog + container::Catalog + 'a,
         Column: self::Column<'a, Message, Theme, Renderer, Row = Row>,
         Message: 'a + Clone,
@@ -358,7 +358,7 @@ pub mod table {
         cell_padding: Padding,
     ) -> Element<'a, Message, Theme, Renderer>
     where
-        Renderer: iced_core::Renderer + 'a,
+        Renderer: iced::advanced::Renderer + 'a,
         Theme: style::Catalog + container::Catalog + 'a,
         Column: self::Column<'a, Message, Theme, Renderer, Row = Row>,
         Message: 'a + Clone,
@@ -388,7 +388,7 @@ pub mod table {
         style: <Theme as style::Catalog>::Style,
     ) -> Element<'a, Message, Theme, Renderer>
     where
-        Renderer: iced_core::Renderer + 'a,
+        Renderer: iced::advanced::Renderer + 'a,
         Theme: style::Catalog + container::Catalog + 'a,
         Column: self::Column<'a, Message, Theme, Renderer, Row = Row>,
         Message: 'a + Clone,
@@ -425,7 +425,7 @@ pub mod table {
         style: <Theme as style::Catalog>::Style,
     ) -> Element<'a, Message, Theme, Renderer>
     where
-        Renderer: iced_core::Renderer + 'a,
+        Renderer: iced::advanced::Renderer + 'a,
         Theme: style::Catalog + container::Catalog + 'a,
         Column: self::Column<'a, Message, Theme, Renderer, Row = Row>,
         Message: 'a + Clone,
@@ -463,7 +463,7 @@ pub mod table {
         min_column_width: f32,
     ) -> Option<Element<'a, Message, Theme, Renderer>>
     where
-        Renderer: iced_core::Renderer + 'a,
+        Renderer: iced::advanced::Renderer + 'a,
         Theme: style::Catalog + container::Catalog + 'a,
         Column: self::Column<'a, Message, Theme, Renderer, Row = Row>,
         Message: 'a + Clone,

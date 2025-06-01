@@ -1,4 +1,4 @@
-use iced_widget::container;
+use iced::widget::container;
 
 /// A set of rules that dictate the styling of a [`Table`](crate::Table).
 pub trait Catalog {
@@ -15,7 +15,7 @@ pub trait Catalog {
     fn divider(&self, style: &Self::Style, hovered: bool) -> container::Style;
 }
 
-impl Catalog for iced_core::Theme {
+impl Catalog for iced::Theme {
     type Style = ();
 
     fn header(&self, _style: &Self::Style) -> container::Style {
@@ -59,15 +59,17 @@ impl Catalog for iced_core::Theme {
 }
 
 pub(crate) mod wrapper {
-    use iced_core::{mouse::Cursor, Color, Element, Length, Size, Vector, Widget};
-    use iced_widget::container;
+    use iced::{mouse::Cursor, Color, Element, Length, Size, Vector};
+    use iced::advanced::widget::Widget;
+    use iced::widget::container;
+    use iced::advanced::renderer;
 
     pub fn header<'a, Message, Theme, Renderer>(
         content: impl Into<Element<'a, Message, Theme, Renderer>>,
         style: <Theme as super::Catalog>::Style,
     ) -> Element<'a, Message, Theme, Renderer>
     where
-        Renderer: iced_core::Renderer + 'a,
+        Renderer: renderer::Renderer + 'a,
         Theme: super::Catalog + 'a,
         Message: 'a,
     {
@@ -84,7 +86,7 @@ pub(crate) mod wrapper {
         style: <Theme as super::Catalog>::Style,
     ) -> Element<'a, Message, Theme, Renderer>
     where
-        Renderer: iced_core::Renderer + 'a,
+        Renderer: renderer::Renderer + 'a,
         Theme: super::Catalog + 'a,
         Message: 'a,
     {
@@ -102,7 +104,7 @@ pub(crate) mod wrapper {
         index: usize,
     ) -> Element<'a, Message, Theme, Renderer>
     where
-        Renderer: iced_core::Renderer + 'a,
+        Renderer: renderer::Renderer + 'a,
         Theme: super::Catalog + 'a,
         Message: 'a,
     {
@@ -139,7 +141,7 @@ pub(crate) mod wrapper {
 
     struct Wrapper<'a, Message, Theme, Renderer>
     where
-        Renderer: iced_core::Renderer,
+        Renderer: renderer::Renderer,
         Theme: super::Catalog,
     {
         content: Element<'a, Message, Theme, Renderer>,
@@ -150,7 +152,7 @@ pub(crate) mod wrapper {
     impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
         for Wrapper<'a, Message, Theme, Renderer>
     where
-        Renderer: iced_core::Renderer,
+        Renderer: renderer::Renderer,
         Theme: super::Catalog,
     {
         fn size(&self) -> Size<Length> {
@@ -159,27 +161,27 @@ pub(crate) mod wrapper {
 
         fn layout(
             &self,
-            state: &mut iced_core::widget::Tree,
+            state: &mut iced::advanced::widget::Tree,
             renderer: &Renderer,
-            limits: &iced_core::layout::Limits,
-        ) -> iced_core::layout::Node {
+            limits: &iced::advanced::layout::Limits,
+        ) -> iced::advanced::layout::Node {
             self.content.as_widget().layout(state, renderer, limits)
         }
 
         fn draw(
             &self,
-            state: &iced_core::widget::Tree,
+            state: &iced::advanced::widget::Tree,
             renderer: &mut Renderer,
             theme: &Theme,
-            style: &iced_core::renderer::Style,
-            layout: iced_core::Layout<'_>,
+            style: &renderer::Style,
+            layout: iced::advanced::Layout<'_>,
             cursor: Cursor,
-            viewport: &iced_core::Rectangle,
+            viewport: &iced::Rectangle,
         ) {
             let appearance = self.target.appearance::<Theme>(theme, &self.style);
 
             renderer.fill_quad(
-                iced_core::renderer::Quad {
+                renderer::Quad {
                     bounds: layout.bounds(),
                     border: appearance.border,
                     shadow: Default::default(),
@@ -191,7 +193,7 @@ pub(crate) mod wrapper {
 
             let style = appearance
                 .text_color
-                .map(|text_color| iced_core::renderer::Style { text_color })
+                .map(|text_color| renderer::Style { text_color })
                 .unwrap_or(*style);
 
             self.content
@@ -199,58 +201,58 @@ pub(crate) mod wrapper {
                 .draw(state, renderer, theme, &style, layout, cursor, viewport)
         }
 
-        fn tag(&self) -> iced_core::widget::tree::Tag {
+        fn tag(&self) -> iced::advanced::widget::tree::Tag {
             self.content.as_widget().tag()
         }
 
-        fn state(&self) -> iced_core::widget::tree::State {
+        fn state(&self) -> iced::advanced::widget::tree::State {
             self.content.as_widget().state()
         }
 
-        fn children(&self) -> Vec<iced_core::widget::Tree> {
+        fn children(&self) -> Vec<iced::advanced::widget::Tree> {
             self.content.as_widget().children()
         }
 
-        fn diff(&self, tree: &mut iced_core::widget::Tree) {
+        fn diff(&self, tree: &mut iced::advanced::widget::Tree) {
             self.content.as_widget().diff(tree)
         }
 
         fn operate(
             &self,
-            state: &mut iced_core::widget::Tree,
-            layout: iced_core::Layout<'_>,
+            state: &mut iced::advanced::widget::Tree,
+            layout: iced::advanced::Layout<'_>,
             renderer: &Renderer,
-            operation: &mut dyn iced_core::widget::Operation,
+            operation: &mut dyn iced::advanced::widget::Operation,
         ) {
             self.content
                 .as_widget()
                 .operate(state, layout, renderer, operation)
         }
 
-        fn on_event(
+        fn update(
             &mut self,
-            state: &mut iced_core::widget::Tree,
-            event: iced_core::Event,
-            layout: iced_core::Layout<'_>,
+            state: &mut iced::advanced::widget::Tree,
+            event: &iced::Event,
+            layout: iced::advanced::Layout<'_>,
             cursor: Cursor,
             renderer: &Renderer,
-            clipboard: &mut dyn iced_core::Clipboard,
-            shell: &mut iced_core::Shell<'_, Message>,
-            viewport: &iced_core::Rectangle,
-        ) -> iced_core::event::Status {
-            self.content.as_widget_mut().on_event(
+            clipboard: &mut dyn iced::advanced::Clipboard,
+            shell: &mut iced::advanced::Shell<'_, Message>,
+            viewport: &iced::Rectangle,
+        ) {
+            self.content.as_widget_mut().update(
                 state, event, layout, cursor, renderer, clipboard, shell, viewport,
             )
         }
 
         fn mouse_interaction(
             &self,
-            state: &iced_core::widget::Tree,
-            layout: iced_core::Layout<'_>,
+            state: &iced::advanced::widget::Tree,
+            layout: iced::advanced::Layout<'_>,
             cursor: Cursor,
-            viewport: &iced_core::Rectangle,
+            viewport: &iced::Rectangle,
             renderer: &Renderer,
-        ) -> iced_core::mouse::Interaction {
+        ) -> iced::advanced::mouse::Interaction {
             self.content
                 .as_widget()
                 .mouse_interaction(state, layout, cursor, viewport, renderer)
@@ -258,21 +260,22 @@ pub(crate) mod wrapper {
 
         fn overlay<'b>(
             &'b mut self,
-            state: &'b mut iced_core::widget::Tree,
-            layout: iced_core::Layout<'_>,
+            state: &'b mut iced::advanced::widget::Tree,
+            layout: iced::advanced::Layout<'_>,
             renderer: &Renderer,
+            viewport: &iced::Rectangle,
             translation: Vector,
-        ) -> Option<iced_core::overlay::Element<'b, Message, Theme, Renderer>> {
+        ) -> Option<iced::overlay::Element<'b, Message, Theme, Renderer>> {
             self.content
                 .as_widget_mut()
-                .overlay(state, layout, renderer, translation)
+                .overlay(state, layout, renderer, viewport, translation)
         }
     }
 
     impl<'a, Message, Theme, Renderer> From<Wrapper<'a, Message, Theme, Renderer>>
         for Element<'a, Message, Theme, Renderer>
     where
-        Renderer: iced_core::Renderer + 'a,
+        Renderer: renderer::Renderer + 'a,
         Theme: super::Catalog + 'a,
         Message: 'a,
     {

@@ -1,10 +1,10 @@
-use iced_core::layout::{self, Layout};
-use iced_core::mouse::Cursor;
-use iced_core::widget::{self, Widget};
-use iced_core::{
+use iced::advanced::layout::{self, Layout};
+use iced::mouse::Cursor;
+use iced::advanced::widget::{self, Widget};
+use iced::{
     event, mouse, overlay, padding, Color, Element, Length, Point, Rectangle, Size, Vector,
 };
-use iced_core::{renderer, Clipboard, Shell};
+use iced::advanced::{renderer, Clipboard, Shell};
 
 use crate::style;
 
@@ -114,17 +114,17 @@ where
         })
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         tree: &mut widget::Tree,
-        event: event::Event,
+        event: &event::Event,
         layout: Layout<'_>,
         cursor: Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
-    ) -> event::Status {
+    ) {
         let state = tree.state.downcast_mut::<State>();
 
         let divider_hover_bounds = self.divider_hover_bounds(layout.bounds());
@@ -136,20 +136,20 @@ where
                 mouse::Event::ButtonPressed(mouse::Button::Left) => {
                     if let Some(origin) = cursor.position_over(divider_hover_bounds) {
                         state.drag_origin = Some(origin);
-                        return event::Status::Captured;
+                        return;
                     }
                 }
                 mouse::Event::ButtonReleased(mouse::Button::Left) => {
                     if state.drag_origin.take().is_some() {
                         shell.publish(self.on_release.clone());
-                        return event::Status::Captured;
+                        return;
                     }
                 }
                 mouse::Event::CursorMoved { .. } => {
                     if let Some(position) = cursor.position() {
                         if let Some(origin) = state.drag_origin {
                             shell.publish((self.on_drag)((position - origin).x));
-                            return event::Status::Captured;
+                            return;
                         }
                     }
                 }
@@ -157,7 +157,7 @@ where
             }
         }
 
-        self.content.as_widget_mut().on_event(
+        self.content.as_widget_mut().update(
             &mut tree.children[0],
             event,
             layout.children().next().unwrap(),
@@ -252,12 +252,14 @@ where
         tree: &'b mut widget::Tree,
         layout: Layout<'_>,
         renderer: &Renderer,
+        viewport: &iced::Rectangle,
         translation: Vector,
-    ) -> Option<overlay::Element<'_, Message, Theme, Renderer>> {
+    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
         self.content.as_widget_mut().overlay(
             &mut tree.children[0],
             layout.children().next().unwrap(),
             renderer,
+            viewport,
             translation,
         )
     }
