@@ -6,6 +6,8 @@ pub use table::{table, Table};
 mod divider;
 mod style;
 
+pub use divider::ColumnVisibilityMessage;
+
 pub mod table {
     //! Display rows of data into columns
     use iced::{Element, Length, Padding};
@@ -39,6 +41,7 @@ pub mod table {
             on_sync,
             on_column_drag: None,
             on_column_release: None,
+            on_column_visibility: None,
             min_width: 0.0,
             min_column_width: 4.0,
             divider_width: 2.0,
@@ -78,6 +81,23 @@ pub mod table {
 
         /// Return the offset of an on-going resize of this column.
         fn resize_offset(&self) -> Option<f32>;
+
+        /// Return the unique identifier for this column (used for visibility tracking).
+        fn id(&self) -> String {
+            // Default implementation - users should override this with meaningful IDs
+            format!("column_{}", std::any::type_name::<Self>())
+        }
+
+        /// Return the display title for this column (used in context menu).
+        fn title(&self) -> String {
+            // Default implementation - users should override this with meaningful titles
+            format!("Column")
+        }
+
+        /// Return whether this column is currently visible.
+        fn is_visible(&self) -> bool {
+            true
+        }
     }
 
     /// An element to display rows of data into columns.
@@ -94,6 +114,7 @@ pub mod table {
         on_sync: fn(scrollable::AbsoluteOffset) -> Message,
         on_column_drag: Option<fn(usize, f32) -> Message>,
         on_column_release: Option<Message>,
+        on_column_visibility: Option<fn(super::divider::ColumnVisibilityMessage) -> Message>,
         min_width: f32,
         min_column_width: f32,
         divider_width: f32,
@@ -122,6 +143,18 @@ pub mod table {
             Self {
                 on_column_drag: Some(on_drag),
                 on_column_release: Some(on_release),
+                ..self
+            }
+        }
+
+        /// Sets the message that will be produced when column visibility is changed.
+        /// This enables the right-click context menu for hiding/showing columns.
+        pub fn on_column_visibility(
+            self,
+            on_visibility: fn(super::divider::ColumnVisibilityMessage) -> Message,
+        ) -> Self {
+            Self {
+                on_column_visibility: Some(on_visibility),
                 ..self
             }
         }
@@ -183,7 +216,7 @@ pub mod table {
     impl<'a, Column, Row, Message, Theme, Renderer> From<Table<'a, Column, Row, Message, Theme>>
         for Element<'a, Message, Theme, Renderer>
     where
-        Renderer: iced::advanced::Renderer + 'a,
+        Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer + 'a,
         Theme: style::Catalog + container::Catalog + scrollable::Catalog + 'a,
         Column: self::Column<'a, Message, Theme, Renderer, Row = Row>,
         Message: 'a + Clone,
@@ -198,6 +231,7 @@ pub mod table {
                 on_sync,
                 on_column_drag,
                 on_column_release,
+                on_column_visibility,
                 min_width,
                 min_column_width,
                 divider_width,
@@ -210,12 +244,15 @@ pub mod table {
                 row(columns
                     .iter()
                     .enumerate()
+                    .filter(|(_, column)| column.is_visible())
                     .map(|(index, column)| {
                         header_container(
                             index,
                             column,
+                            columns,
                             on_column_drag,
                             on_column_release.clone(),
+                            on_column_visibility.clone(),
                             min_column_width,
                             divider_width,
                             cell_padding,
@@ -242,6 +279,7 @@ pub mod table {
                     row(columns
                         .iter()
                         .enumerate()
+                        .filter(|(_, column)| column.is_visible())
                         .map(|(col_index, column)| {
                             body_container(
                                 col_index,
@@ -276,13 +314,16 @@ pub mod table {
                     row(columns
                         .iter()
                         .enumerate()
+                        .filter(|(_, column)| column.is_visible())
                         .map(|(index, column)| {
                             footer_container(
                                 index,
                                 column,
+                                columns,
                                 rows,
                                 on_column_drag,
                                 on_column_release.clone(),
+                                on_column_visibility.clone(),
                                 min_column_width,
                                 divider_width,
                                 cell_padding,
@@ -318,15 +359,17 @@ pub mod table {
     fn header_container<'a, Column, Row, Message, Theme, Renderer>(
         index: usize,
         column: &'a Column,
+        all_columns: &'a [Column],
         on_drag: Option<fn(usize, f32) -> Message>,
         on_release: Option<Message>,
+        on_column_visibility: Option<fn(super::divider::ColumnVisibilityMessage) -> Message>,
         min_column_width: f32,
         divider_width: f32,
         cell_padding: Padding,
         style: <Theme as style::Catalog>::Style,
     ) -> Element<'a, Message, Theme, Renderer>
     where
-        Renderer: iced::advanced::Renderer + 'a,
+        Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer + 'a,
         Theme: style::Catalog + container::Catalog + 'a,
         Column: self::Column<'a, Message, Theme, Renderer, Row = Row>,
         Message: 'a + Clone,
@@ -339,9 +382,11 @@ pub mod table {
         with_divider(
             index,
             column,
+            all_columns,
             content,
             on_drag,
             on_release,
+            on_column_visibility,
             min_column_width,
             divider_width,
             style,
@@ -379,16 +424,18 @@ pub mod table {
     fn footer_container<'a, Column, Row, Message, Theme, Renderer>(
         index: usize,
         column: &'a Column,
+        all_columns: &'a [Column],
         rows: &'a [Row],
         on_drag: Option<fn(usize, f32) -> Message>,
         on_release: Option<Message>,
+        on_column_visibility: Option<fn(super::divider::ColumnVisibilityMessage) -> Message>,
         min_column_width: f32,
         divider_width: f32,
         cell_padding: Padding,
         style: <Theme as style::Catalog>::Style,
     ) -> Element<'a, Message, Theme, Renderer>
     where
-        Renderer: iced::advanced::Renderer + 'a,
+        Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer + 'a,
         Theme: style::Catalog + container::Catalog + 'a,
         Column: self::Column<'a, Message, Theme, Renderer, Row = Row>,
         Message: 'a + Clone,
@@ -405,9 +452,11 @@ pub mod table {
         with_divider(
             index,
             column,
+            all_columns,
             content,
             on_drag,
             on_release,
+            on_column_visibility,
             min_column_width,
             divider_width,
             style,
@@ -417,15 +466,17 @@ pub mod table {
     fn with_divider<'a, Column, Row, Message, Theme, Renderer>(
         index: usize,
         column: &'a Column,
+        all_columns: &'a [Column],
         content: Element<'a, Message, Theme, Renderer>,
         on_drag: Option<fn(usize, f32) -> Message>,
         on_release: Option<Message>,
+        on_column_visibility: Option<fn(super::divider::ColumnVisibilityMessage) -> Message>,
         min_column_width: f32,
         divider_width: f32,
         style: <Theme as style::Catalog>::Style,
     ) -> Element<'a, Message, Theme, Renderer>
     where
-        Renderer: iced::advanced::Renderer + 'a,
+        Renderer: iced::advanced::Renderer + iced::advanced::text::Renderer + 'a,
         Theme: style::Catalog + container::Catalog + 'a,
         Column: self::Column<'a, Message, Theme, Renderer, Row = Row>,
         Message: 'a + Clone,
@@ -436,19 +487,34 @@ pub mod table {
         if let Some((on_drag, on_release)) = on_drag.zip(on_release) {
             let old_width = column.width();
 
-            container(Divider::new(
+            let mut divider = Divider::new(
                 content,
                 divider_width,
+                column.id(),
+                column.title(),
                 move |offset| {
                     let new_width = (old_width + offset).max(min_column_width);
-
                     (on_drag)(index, new_width - old_width)
                 },
                 on_release,
                 style,
-            ))
-            .width(width)
-            .into()
+            );
+
+            // Add column visibility if enabled
+            if let Some(on_visibility) = on_column_visibility {
+                let other_columns: Vec<(String, String, bool)> = all_columns
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| *i != index)
+                    .map(|(_, col)| (col.id(), col.title(), col.is_visible()))
+                    .collect();
+
+                divider = divider.with_column_visibility(on_visibility, other_columns);
+            }
+
+            container(divider)
+                .width(width)
+                .into()
         } else {
             row![content, Space::new(divider_width, Length::Shrink)]
                 .width(width)

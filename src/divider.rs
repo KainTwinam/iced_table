@@ -4,7 +4,7 @@ use iced::advanced::widget::{self, Widget};
 use iced::{
     event, mouse, overlay, padding, Color, Element, Length, Point, Rectangle, Size, Vector,
 };
-use iced::advanced::{renderer, Clipboard, Shell};
+use iced::advanced::{renderer, Clipboard, Overlay, Shell};
 
 use crate::style;
 
@@ -12,6 +12,17 @@ use crate::style;
 struct State {
     drag_origin: Option<Point>,
     is_divider_hovered: bool,
+    show_context_menu: bool,
+    context_menu_position: Point,
+}
+
+/// Messages for column visibility management
+#[derive(Debug, Clone)]
+pub enum ColumnVisibilityMessage {
+    /// Toggle visibility of a column by ID
+    ToggleColumn(String),
+    /// Hide the context menu
+    HideContextMenu,
 }
 
 pub(crate) struct Divider<'a, Message, Theme, Renderer>
@@ -21,9 +32,14 @@ where
 {
     content: Element<'a, Message, Theme, Renderer>,
     width: f32,
+    column_id: String,
+    column_title: String,
     on_drag: Box<dyn Fn(f32) -> Message + 'a>,
     on_release: Message,
+    on_column_visibility: Option<Box<dyn Fn(ColumnVisibilityMessage) -> Message + 'a>>,
     style: <Theme as style::Catalog>::Style,
+    // List of other columns that can be toggled
+    other_columns: Vec<(String, String, bool)>, // (id, title, visible)
 }
 
 impl<'a, Message, Theme, Renderer> Divider<'a, Message, Theme, Renderer>
@@ -34,6 +50,8 @@ where
     pub fn new(
         content: impl Into<Element<'a, Message, Theme, Renderer>>,
         width: f32,
+        column_id: String,
+        column_title: String,
         on_drag: impl Fn(f32) -> Message + 'a,
         on_release: Message,
         style: <Theme as style::Catalog>::Style,
@@ -41,10 +59,24 @@ where
         Self {
             content: content.into(),
             width,
+            column_id,
+            column_title,
             on_drag: Box::new(on_drag),
             on_release,
+            on_column_visibility: None,
             style,
+            other_columns: Vec::new(),
         }
+    }
+
+    pub fn with_column_visibility(
+        mut self,
+        on_column_visibility: impl Fn(ColumnVisibilityMessage) -> Message + 'a,
+        other_columns: Vec<(String, String, bool)>,
+    ) -> Self {
+        self.on_column_visibility = Some(Box::new(on_column_visibility));
+        self.other_columns = other_columns;
+        self
     }
 
     fn divider_bounds(&self, bounds: Rectangle) -> Rectangle {
@@ -57,18 +89,296 @@ where
 
     fn divider_hover_bounds(&self, bounds: Rectangle) -> Rectangle {
         let mut bounds = self.divider_bounds(bounds);
-        // TODO: Configurable
         bounds.x -= 5.0;
         bounds.width += 10.0;
-
         bounds
     }
 
     fn is_content_hovered(&self, mut bounds: Rectangle, cursor: Cursor) -> bool {
-        // Ignore left edge to not conflict with other dividers
         bounds.x = (bounds.x + 5.0).min(bounds.x + bounds.width - 5.0);
-
         cursor.is_over(bounds)
+    }
+
+    fn context_menu_bounds(&self, position: Point) -> Rectangle {
+        // Calculate menu size based on actual content
+        let item_height = 30.0;
+        let padding = 10.0;
+        let separator_height = 6.0;
+        
+        // Count items: current column + separator (if other columns exist) + other columns
+        let item_count = 1 + // current column
+            if self.other_columns.is_empty() { 0 } else { 1 } + // separator
+            self.other_columns.len(); // other columns
+            
+        let content_height = (item_count as f32 * item_height) + 
+            if self.other_columns.is_empty() { 0.0 } else { separator_height };
+            
+        let menu_height = content_height + (padding * 2.0);
+        
+        // Calculate width based on longest text
+        let current_title_width = self.column_title.len() as f32 * 8.0;
+        let max_other_width = self.other_columns
+            .iter()
+            .map(|(_, title, _)| title.len() as f32 * 8.0)
+            .fold(0.0, f32::max);
+            
+        let min_width = 180.0;
+        let content_width = current_title_width.max(max_other_width).max(min_width);
+        let menu_width = content_width + (padding * 2.0);
+        
+        Rectangle {
+            x: position.x,
+            y: position.y,
+            width: menu_width,
+            height: menu_height,
+        }
+    }
+
+    fn draw_context_menu(
+        &self,
+        renderer: &mut Renderer,
+        theme: &Theme,
+        bounds: Rectangle,
+        cursor: Cursor,
+    ) where
+        Renderer: iced::advanced::text::Renderer,
+    {
+        // Draw menu background
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds,
+                border: iced::Border {
+                    color: Color::from_rgb(0.7, 0.7, 0.7),
+                    width: 1.0,
+                    radius: 8.0.into(),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.4),
+                    offset: Vector::new(0.0, 4.0),
+                    blur_radius: 12.0,
+                },
+            },
+            Color::WHITE,
+        );
+
+        let mut y_offset = bounds.y + 8.0;
+        let item_height = 30.0;
+        let padding_x = 12.0;
+
+        // Current column item - "Hide [Column]"
+        let item_bounds = Rectangle {
+            x: bounds.x,
+            y: y_offset,
+            width: bounds.width,
+            height: item_height,
+        };
+
+        // Highlight on hover
+        if cursor.is_over(item_bounds) {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle {
+                        x: item_bounds.x + 2.0,
+                        y: item_bounds.y,
+                        width: item_bounds.width - 4.0,
+                        height: item_bounds.height,
+                    },
+                    border: iced::Border::default(),
+                    shadow: iced::Shadow::default(),
+                },
+                Color::from_rgb(0.95, 0.95, 1.0),
+            );
+        }
+
+        // Draw text for current column with corrected API
+        let hide_text = format!("Hide {}", self.column_title);
+        renderer.fill_text(
+            iced::advanced::text::Text {
+                content: hide_text,
+                bounds: Size::new(item_bounds.width - padding_x * 2.0, item_height),
+                size: iced::Pixels(14.0),
+                line_height: iced::advanced::text::LineHeight::Relative(1.2),
+                font: renderer.default_font(),
+                align_x: iced::advanced::text::Alignment::Left,
+                align_y: iced::alignment::Vertical::Center,
+                wrapping: iced::advanced::text::Wrapping::Word,
+                shaping: iced::advanced::text::Shaping::Basic,
+            },
+            Point::new(item_bounds.x + padding_x, item_bounds.y + 14.0),
+            Color::from_rgb(0.2, 0.2, 0.2),
+            //item_bounds,
+            bounds,
+        );
+
+        y_offset += item_height;
+
+        // Draw separator if there are other columns
+        if !self.other_columns.is_empty() {
+            let separator_y = y_offset + 2.0;
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle {
+                        x: bounds.x + 8.0,
+                        y: separator_y,
+                        width: bounds.width - 16.0,
+                        height: 1.0,
+                    },
+                    border: iced::Border::default(),
+                    shadow: iced::Shadow::default(),
+                },
+                Color::from_rgb(0.85, 0.85, 0.85),
+            );
+            y_offset += 6.0;
+        }
+
+        // Draw other columns with checkmarks
+        for (column_id, title, visible) in &self.other_columns {
+            // 1) The full rectangle of this row (30px tall, full menu width)
+            let item_bounds = Rectangle {
+                x: bounds.x,
+                y: y_offset,
+                width: bounds.width,
+                height: item_height,
+            };
+
+            // 2) Draw hover‐highlight if needed:
+            if cursor.is_over(item_bounds) {
+                let hover_rect = Rectangle {
+                    x: item_bounds.x + 2.0,
+                    y: item_bounds.y,
+                    width: item_bounds.width - 4.0,
+                    height: item_bounds.height,
+                };
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: hover_rect,
+                        border: iced::Border::default(),
+                        shadow: iced::Shadow::default(),
+                    },
+                    Color::from_rgb(0.95, 0.95, 1.0),
+                );
+            }
+
+            // 3) Compute checkbox position & draw the box:
+            let checkbox_size = 16.0;
+            let checkbox_x = item_bounds.x + padding_x;  
+            let checkbox_y = item_bounds.y + (item_bounds.height - checkbox_size) / 2.0;
+
+            // Draw the square (blue fill if visible, white fill + gray border otherwise)
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle {
+                        x: checkbox_x,
+                        y: checkbox_y,
+                        width: checkbox_size,
+                        height: checkbox_size,
+                    },
+                    border: iced::Border {
+                        color: Color::from_rgb(0.6, 0.6, 0.6),
+                        width: 1.0,
+                        radius: 3.0.into(),
+                    },
+                    shadow: iced::Shadow::default(),
+                },
+                if *visible {
+                    Color::from_rgb(0.2, 0.6, 1.0) // colored fill
+                } else {
+                    Color::WHITE.into()           // white = same as menu background
+                },
+            );
+
+            // 4) If “visible == true”, draw the checkmark (“✓”) centered inside that 16×16:
+            if *visible {
+                // Put a 12px “✓” in the very center of the 16×16 box:
+                renderer.fill_text(
+                    iced::advanced::text::Text {
+                        content: String::from("✓"),
+                        bounds: Size::new(checkbox_size, checkbox_size),
+                        size: iced::Pixels(12.0),
+                        line_height: iced::advanced::text::LineHeight::Relative(1.0),
+                        font: renderer.default_font(),
+                        align_x: iced::advanced::text::Alignment::Center,
+                        align_y: iced::alignment::Vertical::Center,
+                        wrapping: iced::advanced::text::Wrapping::Word,
+                        shaping: iced::advanced::text::Shaping::Advanced,
+                    },
+                    // Top‐left of that 16×16 checkmark area:
+                    Point::new(checkbox_x, checkbox_y),
+                    Color::WHITE,
+                    // Clip to the entire menu, not just item_bounds, so the “✓” never gets cut:
+                    bounds,
+                );
+            }
+
+            // 5) Draw the column title to the right of the checkbox, properly aligned:
+            let gap_between = 8.0;
+            let text_x = checkbox_x + checkbox_size + gap_between;  
+            // How many pixels from menu.left is that?:
+            let left_padding = text_x - bounds.x;     
+            // Now clip the text so it never flows past right edge (leave padding_x on right):
+            let text_clip_width = bounds.width - left_padding - padding_x;
+
+            renderer.fill_text(
+                iced::advanced::text::Text {
+                    content: title.to_owned(),
+                    bounds: Size::new(text_clip_width, item_height),
+                    size: iced::Pixels(14.0),
+                    line_height: iced::advanced::text::LineHeight::Relative(1.0),
+                    font: renderer.default_font(),
+                    align_x: iced::advanced::text::Alignment::Left,
+                    align_y: iced::alignment::Vertical::Center,
+                    wrapping: iced::advanced::text::Wrapping::Word,
+                    shaping: iced::advanced::text::Shaping::Basic,
+                },
+                // Draw the label at the very top‐left of that 30px‐high text area:
+                Point::new(text_x, item_bounds.y + 14.0),
+                Color::from_rgb(0.2, 0.2, 0.2),
+                // Clip region = entire menu, so text is never cut vertically:
+                bounds,
+            );
+
+            // 6) Move down for the next row:
+            y_offset += item_height;
+}
+    }
+
+    fn handle_context_menu_click(
+        &self,
+        cursor_position: Point,
+        menu_bounds: Rectangle,
+        shell: &mut Shell<'_, Message>,
+    ) -> bool {
+        if cursor_position.x < menu_bounds.x 
+            || cursor_position.x >= menu_bounds.x + menu_bounds.width
+            || cursor_position.y < menu_bounds.y 
+            || cursor_position.y >= menu_bounds.y + menu_bounds.height {
+            return false;
+        }
+
+        let relative_y = cursor_position.y - menu_bounds.y - 8.0;
+        let item_height = 30.0;
+        let separator_offset = if self.other_columns.is_empty() { 0.0 } else { 6.0 };
+        
+        if relative_y < item_height {
+            // Clicked on current column
+            if let Some(on_column_visibility) = &self.on_column_visibility {
+                shell.publish((on_column_visibility)(ColumnVisibilityMessage::ToggleColumn(self.column_id.clone())));
+                return true;
+            }
+        } else if !self.other_columns.is_empty() && relative_y > item_height + separator_offset {
+            // Clicked on other column
+            let other_column_y = relative_y - item_height - separator_offset;
+            let other_index = (other_column_y / item_height) as usize;
+            
+            if let Some((id, _, _)) = self.other_columns.get(other_index) {
+                if let Some(on_column_visibility) = &self.on_column_visibility {
+                    shell.publish((on_column_visibility)(ColumnVisibilityMessage::ToggleColumn(id.clone())));
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 }
 
@@ -76,7 +386,7 @@ impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
     for Divider<'a, Message, Theme, Renderer>
 where
     Message: Clone,
-    Renderer: renderer::Renderer,
+    Renderer: renderer::Renderer + iced::advanced::text::Renderer,
     Theme: style::Catalog,
 {
     fn tag(&self) -> widget::tree::Tag {
@@ -126,17 +436,39 @@ where
         viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_mut::<State>();
-
         let divider_hover_bounds = self.divider_hover_bounds(layout.bounds());
 
+        // Always update hover state for smooth transitions
         state.is_divider_hovered = cursor.is_over(divider_hover_bounds);
 
-        if let event::Event::Mouse(event) = event {
-            match event {
+        // Handle mouse events
+        if let event::Event::Mouse(mouse_event) = event {
+            match mouse_event {
                 mouse::Event::ButtonPressed(mouse::Button::Left) => {
+                    // Always close context menu on left click anywhere
+                    if state.show_context_menu {
+                        state.show_context_menu = false;
+                        shell.invalidate_layout();
+                        shell.invalidate_widgets();
+                    }
+                    
                     if let Some(origin) = cursor.position_over(divider_hover_bounds) {
                         state.drag_origin = Some(origin);
+                        shell.invalidate_layout();
+                        shell.invalidate_widgets();
                         return;
+                    }
+                }
+                mouse::Event::ButtonPressed(mouse::Button::Right) => {
+                    // Show context menu on right click (only if column visibility is enabled)
+                    if self.on_column_visibility.is_some() && cursor.is_over(layout.bounds()) {
+                        if let Some(position) = cursor.position() {
+                            state.context_menu_position = position;
+                            state.show_context_menu = true;
+                            shell.invalidate_layout();
+                            shell.invalidate_widgets();
+                            return;
+                        }
                     }
                 }
                 mouse::Event::ButtonReleased(mouse::Button::Left) => {
@@ -149,6 +481,16 @@ where
                     if let Some(position) = cursor.position() {
                         if let Some(origin) = state.drag_origin {
                             shell.publish((self.on_drag)((position - origin).x));
+                            shell.invalidate_layout();
+                            shell.invalidate_widgets();
+                            return;
+                        }
+                        
+                        // Force updates for hover state changes
+                        let divider_hover_bounds = self.divider_hover_bounds(layout.bounds());
+                        if cursor.is_over(divider_hover_bounds) || cursor.is_over(layout.bounds()) {
+                            shell.invalidate_layout();
+                            shell.invalidate_widgets();
                             return;
                         }
                     }
@@ -157,6 +499,7 @@ where
             }
         }
 
+        // Always delegate to content for normal events
         self.content.as_widget_mut().update(
             &mut tree.children[0],
             event,
@@ -166,7 +509,7 @@ where
             clipboard,
             shell,
             viewport,
-        )
+        );
     }
 
     fn mouse_interaction(
@@ -214,6 +557,7 @@ where
             viewport,
         );
 
+        // Draw divider
         if self.is_content_hovered(layout.bounds(), cursor)
             || state.is_divider_hovered
             || state.drag_origin.is_some()
@@ -254,14 +598,28 @@ where
         renderer: &Renderer,
         viewport: &iced::Rectangle,
         translation: Vector,
-    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
-        self.content.as_widget_mut().overlay(
-            &mut tree.children[0],
-            layout.children().next().unwrap(),
-            renderer,
-            viewport,
-            translation,
-        )
+    ) -> Option<overlay::Element<'_, Message, Theme, Renderer>> {
+        let state = tree.state.downcast_ref::<State>();
+
+        // Only create overlay if THIS specific divider has the context menu open
+        if state.show_context_menu {
+            let menu_overlay = ContextMenuOverlay {
+                divider: self,
+                position: state.context_menu_position + translation,
+                tree,
+            };
+
+            Some(overlay::Element::new(Box::new(menu_overlay)))
+        } else {
+            // Always delegate to content's overlay
+            self.content.as_widget_mut().overlay(
+                &mut tree.children[0],
+                layout.children().next().unwrap(),
+                renderer,
+                viewport,
+                translation,
+            )
+        }
     }
 
     fn operate(
@@ -284,10 +642,136 @@ impl<'a, Message, Theme, Renderer> From<Divider<'a, Message, Theme, Renderer>>
     for Element<'a, Message, Theme, Renderer>
 where
     Message: Clone + 'a,
-    Renderer: renderer::Renderer + 'a,
+    Renderer: renderer::Renderer + iced::advanced::text::Renderer + 'a,
     Theme: style::Catalog + 'a,
 {
     fn from(divider: Divider<'a, Message, Theme, Renderer>) -> Self {
         Element::new(divider)
+    }
+}
+
+// Context menu overlay implementation
+struct ContextMenuOverlay<'a, 'b, Message, Theme, Renderer>
+where
+    Renderer: renderer::Renderer + iced::advanced::text::Renderer,
+    Theme: style::Catalog,
+{
+    divider: &'a Divider<'a, Message, Theme, Renderer>,
+    position: Point,
+    tree: &'b mut widget::Tree,
+}
+
+impl<'a, 'b, Message, Theme, Renderer> Overlay<Message, Theme, Renderer>
+    for ContextMenuOverlay<'a, 'b, Message, Theme, Renderer>
+where
+    Message: Clone,
+    Renderer: renderer::Renderer + iced::advanced::text::Renderer,
+    Theme: style::Catalog,
+{
+    fn layout(&mut self, _renderer: &Renderer, bounds: Size) -> layout::Node {
+        let menu_bounds = self.divider.context_menu_bounds(self.position);
+        
+        // Ensure menu doesn't go off screen
+        let adjusted_x = if menu_bounds.x + menu_bounds.width > bounds.width {
+            bounds.width - menu_bounds.width
+        } else {
+            menu_bounds.x
+        }.max(0.0);
+        
+        let adjusted_y = if menu_bounds.y + menu_bounds.height > bounds.height {
+            bounds.height - menu_bounds.height
+        } else {
+            menu_bounds.y
+        }.max(0.0);
+
+        layout::Node::new(Size::new(menu_bounds.width, menu_bounds.height))
+            .move_to(Point::new(adjusted_x, adjusted_y))
+    }
+
+    fn update(
+        &mut self,
+        event: &iced::Event,
+        layout: Layout<'_>,
+        cursor: Cursor,
+        renderer: &Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+    ) {
+        let menu_bounds = layout.bounds();
+
+        match &event {
+            iced::Event::Mouse(mouse_event) => {
+                match mouse_event {
+                    mouse::Event::ButtonPressed(mouse::Button::Left) => {
+                        if let Some(cursor_pos) = cursor.position() {
+                            if cursor.is_over(menu_bounds) {
+                                // Handle click inside menu
+                                if self.divider.handle_context_menu_click(cursor_pos, menu_bounds, shell) {
+                                    // Close menu after successful click
+                                    let state = self.tree.state.downcast_mut::<State>();
+                                    state.show_context_menu = false;
+                                }
+                                shell.invalidate_layout();
+                                shell.invalidate_widgets();
+                                shell.capture_event();
+                                return;
+                            } else {
+                                // Clicked outside menu, close it
+                                let state = self.tree.state.downcast_mut::<State>();
+                                state.show_context_menu = false;
+                                shell.capture_event();
+                                return;
+                            }
+                        }
+                    }
+                    mouse::Event::ButtonPressed(mouse::Button::Right) => {
+                        // Close on right click
+                        let state = self.tree.state.downcast_mut::<State>();
+                        state.show_context_menu = false;
+                        shell.invalidate_layout();
+                        shell.invalidate_widgets();
+                        shell.capture_event();
+                        return;
+                    }
+                    mouse::Event::CursorMoved { .. } => {
+                        // Always capture mouse moves for hover updates
+                        shell.invalidate_layout();
+                        shell.invalidate_widgets();
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        layout: Layout<'_>,
+        cursor: Cursor,
+        viewport: &Rectangle,
+        renderer: &Renderer,
+    ) -> mouse::Interaction {
+        if cursor.is_over(layout.bounds()) {
+            mouse::Interaction::Pointer
+        } else {
+            mouse::Interaction::default()
+        }
+    }
+
+    fn draw(
+        &self,
+        renderer: &mut Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: Cursor,
+    ) {
+        self.divider.draw_context_menu(renderer, theme, layout.bounds(), cursor);
+    }
+
+    fn is_over(&self, layout: Layout<'_>, _renderer: &Renderer, cursor_position: Point) -> bool {
+        layout.bounds().contains(cursor_position)
     }
 }

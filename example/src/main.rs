@@ -1,11 +1,12 @@
 use std::fmt;
+use std::collections::HashMap;
 
 use iced::widget::{
     button, checkbox, column, container, horizontal_space, pick_list, responsive, scrollable, text,
     text_input,
 };
 use iced::{Element, Length, Renderer, Task, Theme};
-use iced_table::table;
+use iced_table::{table, ColumnVisibilityMessage};
 
 fn main() {
     iced::application(App::new, App::update, App::view)
@@ -24,10 +25,12 @@ enum Message {
     FooterEnabled(bool),
     MinWidthEnabled(bool),
     DarkThemeEnabled(bool),
+    ColumnVisibilityEnabled(bool),
     Notes(usize, String),
     Category(usize, Category),
     Enabled(usize, bool),
     Delete(usize),
+    ColumnVisibility(ColumnVisibilityMessage),
 }
 
 struct App {
@@ -39,11 +42,31 @@ struct App {
     resize_columns_enabled: bool,
     footer_enabled: bool,
     min_width_enabled: bool,
+    column_visibility_enabled: bool,
+    column_visibility: HashMap<String, bool>,
     theme: Theme,
+}
+
+impl App {
+    fn update_column_visibility(&mut self) {
+        // Update each column's visibility based on our state
+        for column in &mut self.columns {
+            if let Some(&visible) = self.column_visibility.get(column.id()) {
+                column.visible = visible;
+            }
+        }
+    }
 }
 
 impl Default for App {
     fn default() -> Self {
+        let mut column_visibility = HashMap::new();
+        column_visibility.insert("index".to_string(), true);
+        column_visibility.insert("category".to_string(), true);
+        column_visibility.insert("enabled".to_string(), true);
+        column_visibility.insert("notes".to_string(), true);
+        column_visibility.insert("delete".to_string(), false); // Hidden by default
+
         Self {
             columns: vec![
                 Column::new(ColumnKind::Index),
@@ -59,6 +82,8 @@ impl Default for App {
             resize_columns_enabled: true,
             footer_enabled: true,
             min_width_enabled: true,
+            column_visibility_enabled: true,
+            column_visibility,
             theme: Theme::Light,
         }
     }
@@ -66,7 +91,7 @@ impl Default for App {
 
 impl App {
     fn title(&self) -> String {
-        "Iced Table".into()
+        "Iced Table - Column Visibility Demo".into()
     }
 
     fn theme(&self) -> Theme {
@@ -98,6 +123,7 @@ impl App {
             Message::ResizeColumnsEnabled(enabled) => self.resize_columns_enabled = enabled,
             Message::FooterEnabled(enabled) => self.footer_enabled = enabled,
             Message::MinWidthEnabled(enabled) => self.min_width_enabled = enabled,
+            Message::ColumnVisibilityEnabled(enabled) => self.column_visibility_enabled = enabled,
             Message::DarkThemeEnabled(enabled) => {
                 if enabled {
                     self.theme = Theme::Dark;
@@ -123,6 +149,24 @@ impl App {
             Message::Delete(index) => {
                 self.rows.remove(index);
             }
+            Message::ColumnVisibility(visibility_msg) => {
+                match visibility_msg {
+                    ColumnVisibilityMessage::ToggleColumn(column_id) => {
+                        if let Some(visible) = self.column_visibility.get_mut(&column_id) {
+                            *visible = !*visible;
+                            
+                            // Update the corresponding column
+                            if let Some(column) = self.columns.iter_mut().find(|c| c.id() == column_id) {
+                                column.visible = *visible;
+                            }
+                        }
+                    }
+                    ColumnVisibilityMessage::HideContextMenu => {
+                        // Context menu was closed, no action needed
+                        // This could be used to do cleanup if needed
+                    }
+                }
+            }
         }
 
         Task::none()
@@ -147,17 +191,31 @@ impl App {
             if self.min_width_enabled {
                 table = table.min_width(size.width);
             }
+            if self.column_visibility_enabled {
+                table = table.on_column_visibility(Message::ColumnVisibility);
+            }
 
             table.into()
         });
 
+        let visible_columns_count = self.columns.iter().filter(|c| c.visible).count();
+
         let content = column![
+            text("Table Features:").size(16),
             checkbox("Resize Columns", self.resize_columns_enabled,)
                 .on_toggle(Message::ResizeColumnsEnabled),
             checkbox("Footer", self.footer_enabled,).on_toggle(Message::FooterEnabled),
             checkbox("Min Width", self.min_width_enabled,).on_toggle(Message::MinWidthEnabled),
+            checkbox("Column Visibility (Right-click headers)", self.column_visibility_enabled,)
+                .on_toggle(Message::ColumnVisibilityEnabled),
             checkbox("Dark Theme", matches!(self.theme, Theme::Dark),)
                 .on_toggle(Message::DarkThemeEnabled),
+            text(format!("Visible columns: {}/{}", visible_columns_count, self.columns.len())).size(14),
+            if self.column_visibility_enabled {
+                text("💡 Right-click on column headers to show/hide columns!").size(12)
+            } else {
+                text("Enable column visibility to access the context menu").size(12)
+            },
             table,
         ]
         .spacing(6);
@@ -174,6 +232,7 @@ struct Column {
     kind: ColumnKind,
     width: f32,
     resize_offset: Option<f32>,
+    visible: bool,
 }
 
 impl Column {
@@ -186,14 +245,41 @@ impl Column {
             ColumnKind::Delete => 100.0,
         };
 
+        let visible = match kind {
+            ColumnKind::Delete => false, // Hidden by default
+            _ => true,
+        };
+
         Self {
             kind,
             width,
             resize_offset: None,
+            visible,
+        }
+    }
+
+    fn id(&self) -> &'static str {
+        match self.kind {
+            ColumnKind::Index => "index",
+            ColumnKind::Category => "category",
+            ColumnKind::Enabled => "enabled",
+            ColumnKind::Notes => "notes",
+            ColumnKind::Delete => "delete",
+        }
+    }
+
+    fn display_name(&self) -> &'static str {
+        match self.kind {
+            ColumnKind::Index => "Index",
+            ColumnKind::Category => "Category", 
+            ColumnKind::Enabled => "Enabled",
+            ColumnKind::Notes => "Notes",
+            ColumnKind::Delete => "Delete",
         }
     }
 }
 
+#[derive(Clone, Copy)]
 enum ColumnKind {
     Index,
     Category,
@@ -258,14 +344,7 @@ impl<'a> table::Column<'a, Message, Theme, Renderer> for Column {
     type Row = Row;
 
     fn header(&'a self, _col_index: usize) -> Element<'a, Message> {
-        let content = match self.kind {
-            ColumnKind::Index => "Index",
-            ColumnKind::Category => "Category",
-            ColumnKind::Enabled => "Enabled",
-            ColumnKind::Notes => "Notes",
-            ColumnKind::Delete => "",
-        };
-
+        let content = self.display_name();
         container(text(content)).center_y(24).into()
     }
 
@@ -294,7 +373,6 @@ impl<'a> table::Column<'a, Message, Theme, Renderer> for Column {
     fn footer(&'a self, _col_index: usize, rows: &'a [Row]) -> Option<Element<'a, Message>> {
         let content = if matches!(self.kind, ColumnKind::Enabled) {
             let total_enabled = rows.iter().filter(|row| row.is_enabled).count();
-
             Element::from(text(format!("Total Enabled: {total_enabled}")))
         } else {
             horizontal_space().into()
@@ -309,5 +387,18 @@ impl<'a> table::Column<'a, Message, Theme, Renderer> for Column {
 
     fn resize_offset(&self) -> Option<f32> {
         self.resize_offset
+    }
+
+    // Implement the new trait methods for column visibility
+    fn id(&self) -> String {
+        Column::id(self).to_string()
+    }
+
+    fn title(&self) -> String {
+        self.display_name().to_string()
+    }
+
+    fn is_visible(&self) -> bool {
+        self.visible
     }
 }
