@@ -47,17 +47,6 @@ struct App {
     theme: Theme,
 }
 
-impl App {
-    fn update_column_visibility(&mut self) {
-        // Update each column's visibility based on our state
-        for column in &mut self.columns {
-            if let Some(&visible) = self.column_visibility.get(column.id()) {
-                column.visible = visible;
-            }
-        }
-    }
-}
-
 impl Default for App {
     fn default() -> Self {
         let mut column_visibility = HashMap::new();

@@ -69,7 +69,7 @@ where
             on_column_visibility: None,
             style,
             other_columns: Vec::new(),
-            always_show_divider: false,
+            always_show_divider: true,
         }
     }
 
@@ -99,12 +99,11 @@ where
 
     // FIXED: Expand hover bounds to cover the entire column width
     fn divider_hover_bounds(&self, bounds: Rectangle) -> Rectangle {
-        Rectangle {
-            x: bounds.x, // Start from the beginning of the column
-            y: bounds.y,
-            width: bounds.width, // Cover the entire column width
-            height: bounds.height,
-        }
+            Rectangle {
+                x: bounds.x + bounds.width - self.width - 5.0,
+                width: self.width + 10.0,
+                ..bounds
+            }
     }
 
     fn is_content_hovered(&self, bounds: Rectangle, cursor: Cursor) -> bool {
@@ -134,13 +133,12 @@ where
         true
     }
 
-    fn context_menu_bounds(&self, position: Point) -> Rectangle {
-        // Calculate menu size based on actual content
+    fn context_menu_bounds(&self, position: Point, viewport_height: f32) -> (Rectangle, bool) {
         let item_height = 30.0;
         let padding = 10.0;
         let separator_height = 6.0;
+        let max_height = viewport_height * 0.8; // Use 80% of viewport height
         
-        // Count items: current column + separator (if other columns exist) + other columns
         let item_count = 1 + // current column
             if self.other_columns.is_empty() { 0 } else { 1 } + // separator
             self.other_columns.len(); // other columns
@@ -148,9 +146,11 @@ where
         let content_height = (item_count as f32 * item_height) + 
             if self.other_columns.is_empty() { 0.0 } else { separator_height };
             
-        let menu_height = content_height + (padding * 2.0);
+        let desired_height = content_height + (padding * 2.0);
+        let actual_height = desired_height.min(max_height);
+        let needs_scroll = desired_height > max_height;
         
-        // Calculate width based on longest text
+        // Calculate width
         let current_title_width = self.column_title.len() as f32 * 8.0;
         let max_other_width = self.other_columns
             .iter()
@@ -159,44 +159,35 @@ where
             
         let min_width = 180.0;
         let content_width = current_title_width.max(max_other_width).max(min_width);
-        let menu_width = content_width + (padding * 2.0);
+        let menu_width = content_width + (padding * 2.0) + if needs_scroll { 20.0 } else { 0.0 }; // Add space for scrollbar
         
-        Rectangle {
+        let menu_bounds = Rectangle {
             x: position.x,
             y: position.y,
             width: menu_width,
-            height: menu_height,
-        }
+            height: actual_height,
+        };
+        
+        (menu_bounds, needs_scroll)
     }
 
-    // FIXED: Use theme colors instead of hardcoded values
     fn draw_context_menu(
         &self,
         renderer: &mut Renderer,
         theme: &Theme,
         bounds: Rectangle,
         cursor: Cursor,
+        scroll_offset: f32,
     ) where
         Renderer: iced::advanced::text::Renderer,
     {
-        // Get theme colors - you may need to adjust these based on your theme implementation
-        let appearance = theme.divider(&self.style, false);
-        let hovered_appearance = theme.header(&self.style);
-        let background_color = appearance.background.unwrap_or_else(|| Color::TRANSPARENT.into());
-        let border_color = appearance.border.color;
-        let text_color = hovered_appearance.text_color.unwrap_or_else(|| Color::from_rgb(0.2, 0.2, 0.2));
-        let hover_color = hovered_appearance.background.unwrap_or_else(|| Color::TRANSPARENT.into());
-        let separator_color = Color::scale_alpha(text_color, 0.6);
-        let disabled_text_color = Color::scale_alpha(text_color, 0.6);
-        
-        
+        let colors = self.get_theme_colors(theme);
 
-        // Draw menu background
         renderer.fill_quad(
             renderer::Quad {
                 bounds,
                 border: iced::Border {
-                    color: border_color,
+                    color: colors.border,
                     width: 1.0,
                     radius: 8.0.into(),
                 },
@@ -206,65 +197,78 @@ where
                     blur_radius: 12.0,
                 },
             },
-            background_color,
+            colors.background,
         );
 
-        let mut y_offset = bounds.y + 8.0;
+        // Calculate scrollable content area
+        let content_bounds = Rectangle {
+            x: bounds.x + 8.0,
+            y: bounds.y + 8.0,
+            width: bounds.width - 16.0,
+            height: bounds.height - 16.0,
+        };
+
+        let mut y_offset = content_bounds.y - scroll_offset;
         let item_height = 30.0;
         let padding_x = 12.0;
 
+        // Only draw items that are visible in the scrollable area
+        let visible_top = content_bounds.y;
+        let visible_bottom = content_bounds.y + content_bounds.height;
+
         // Current column item - "Hide [Column]"
-        let item_bounds = Rectangle {
-            x: bounds.x,
-            y: y_offset,
-            width: bounds.width,
-            height: item_height,
-        };
+        if y_offset + item_height >= visible_top && y_offset <= visible_bottom {
+            let item_bounds = Rectangle {
+                x: bounds.x,
+                y: y_offset.max(visible_top),
+                width: bounds.width,
+                height: item_height.min(visible_bottom - y_offset.max(visible_top)),
+            };
 
-        // Check if this column can be hidden
-        let can_hide_current = self.can_hide_column(&self.column_id);
-        let current_text_color = if can_hide_current { text_color } else { disabled_text_color };
+            let can_hide_current = self.can_hide_column(&self.column_id);
+            let current_text_color = if can_hide_current { colors.text } else { colors.disabled_text };
 
-        // Highlight on hover (only if clickable)
-        if can_hide_current && cursor.is_over(item_bounds) {
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds: Rectangle {
-                        x: item_bounds.x + 2.0,
-                        y: item_bounds.y,
-                        width: item_bounds.width - 4.0,
-                        height: item_bounds.height,
+            // Highlight on hover (only if clickable)
+            if can_hide_current && cursor.is_over(item_bounds) {
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: Rectangle {
+                            x: item_bounds.x + 2.0,
+                            y: item_bounds.y,
+                            width: item_bounds.width - 4.0,
+                            height: item_bounds.height,
+                        },
+                        border: iced::Border::default(),
+                        shadow: iced::Shadow::default(),
                     },
-                    border: iced::Border::default(),
-                    shadow: iced::Shadow::default(),
+                    colors.hover_background,
+                );
+            }
+
+            // Draw text for current column
+            let hide_text = format!("Hide {}", self.column_title);
+            renderer.fill_text(
+                iced::advanced::text::Text {
+                    content: hide_text,
+                    bounds: Size::new(item_bounds.width - padding_x * 2.0, item_height),
+                    size: iced::Pixels(14.0),
+                    line_height: iced::advanced::text::LineHeight::Relative(1.2),
+                    font: renderer.default_font(),
+                    align_x: iced::advanced::text::Alignment::Left,
+                    align_y: iced::alignment::Vertical::Center,
+                    wrapping: iced::advanced::text::Wrapping::Word,
+                    shaping: iced::advanced::text::Shaping::Basic,
                 },
-                hover_color,
+                Point::new(item_bounds.x + padding_x, y_offset + 14.0),
+                current_text_color,
+                content_bounds, // Use content bounds for clipping
             );
         }
-
-        // Draw text for current column
-        let hide_text = format!("Hide {}", self.column_title);
-        renderer.fill_text(
-            iced::advanced::text::Text {
-                content: hide_text,
-                bounds: Size::new(item_bounds.width - padding_x * 2.0, item_height),
-                size: iced::Pixels(14.0),
-                line_height: iced::advanced::text::LineHeight::Relative(1.2),
-                font: renderer.default_font(),
-                align_x: iced::advanced::text::Alignment::Left,
-                align_y: iced::alignment::Vertical::Center,
-                wrapping: iced::advanced::text::Wrapping::Word,
-                shaping: iced::advanced::text::Shaping::Basic,
-            },
-            Point::new(item_bounds.x + padding_x, item_bounds.y + 14.0),
-            current_text_color,
-            bounds,
-        );
 
         y_offset += item_height;
 
         // Draw separator if there are other columns
-        if !self.other_columns.is_empty() {
+        if !self.other_columns.is_empty() && y_offset >= visible_top && y_offset <= visible_bottom {
             let separator_y = y_offset + 2.0;
             renderer.fill_quad(
                 renderer::Quad {
@@ -277,113 +281,114 @@ where
                     border: iced::Border::default(),
                     shadow: iced::Shadow::default(),
                 },
-                separator_color,
+                colors.separator,
             );
             y_offset += 6.0;
         }
 
         // Draw other columns with checkmarks
         for (column_id, title, visible) in &self.other_columns {
-            let item_bounds = Rectangle {
-                x: bounds.x,
-                y: y_offset,
-                width: bounds.width,
-                height: item_height,
-            };
-
-            // Check if this column can be toggled
-            let can_toggle = if *visible {
-                self.can_hide_column(column_id)
-            } else {
-                true // Can always show hidden columns
-            };
-
-            let item_text_color = if can_toggle { text_color } else { disabled_text_color };
-
-            // Draw hover highlight if clickable
-            if can_toggle && cursor.is_over(item_bounds) {
-                let hover_rect = Rectangle {
-                    x: item_bounds.x + 2.0,
-                    y: item_bounds.y,
-                    width: item_bounds.width - 4.0,
-                    height: item_bounds.height,
+            if y_offset + item_height >= visible_top && y_offset <= visible_bottom {
+                let item_bounds = Rectangle {
+                    x: bounds.x,
+                    y: y_offset.max(visible_top),
+                    width: bounds.width,
+                    height: item_height.min(visible_bottom - y_offset.max(visible_top)),
                 };
+
+                let can_toggle = if *visible {
+                    self.can_hide_column(column_id)
+                } else {
+                    true
+                };
+
+                let item_text_color = if can_toggle { colors.text } else { colors.disabled_text };
+
+                // Draw hover highlight if clickable
+                if can_toggle && cursor.is_over(item_bounds) {
+                    let hover_rect = Rectangle {
+                        x: item_bounds.x + 2.0,
+                        y: item_bounds.y,
+                        width: item_bounds.width - 4.0,
+                        height: item_bounds.height,
+                    };
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: hover_rect,
+                            border: iced::Border::default(),
+                            shadow: iced::Shadow::default(),
+                        },
+                        colors.hover_background,
+                    );
+                }
+
+                // Draw checkbox and text (same as before but with theme colors)
+                let checkbox_size = 16.0;
+                let checkbox_x = item_bounds.x + padding_x;  
+                let checkbox_y = y_offset + (item_height - checkbox_size) / 2.0;
+
+                // Draw the checkbox
                 renderer.fill_quad(
                     renderer::Quad {
-                        bounds: hover_rect,
-                        border: iced::Border::default(),
+                        bounds: Rectangle {
+                            x: checkbox_x,
+                            y: checkbox_y,
+                            width: checkbox_size,
+                            height: checkbox_size,
+                        },
+                        border: iced::Border {
+                            color: if can_toggle { colors.border } else { colors.disabled_text },
+                            width: 1.0,
+                            radius: 3.0.into(),
+                        },
                         shadow: iced::Shadow::default(),
                     },
-                    hover_color,
+                    if can_toggle { Color::from_rgb(0.2, 0.6, 1.0) } else { colors.disabled_text }
                 );
-            }
 
-            // Compute checkbox position & draw the box
-            let checkbox_size = 16.0;
-            let checkbox_x = item_bounds.x + padding_x;  
-            let checkbox_y = item_bounds.y + (item_bounds.height - checkbox_size) / 2.0;
+                // Draw checkmark if visible
+                if *visible {
+                    renderer.fill_text(
+                        iced::advanced::text::Text {
+                            content: String::from("✓"),
+                            bounds: Size::new(checkbox_size, checkbox_size),
+                            size: iced::Pixels(12.0),
+                            line_height: iced::advanced::text::LineHeight::Relative(1.0),
+                            font: renderer.default_font(),
+                            align_x: iced::advanced::text::Alignment::Center,
+                            align_y: iced::alignment::Vertical::Center,
+                            wrapping: iced::advanced::text::Wrapping::Word,
+                            shaping: iced::advanced::text::Shaping::Advanced,
+                        },
+                        Point::new(checkbox_x + 8.0, checkbox_y + 9.0),
+                        Color::WHITE,
+                        content_bounds,
+                    );
+                }
 
-            // Draw the checkbox
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds: Rectangle {
-                        x: checkbox_x,
-                        y: checkbox_y,
-                        width: checkbox_size,
-                        height: checkbox_size,
-                    },
-                    border: iced::Border {
-                        color: if can_toggle { Color::from_rgb(0.6, 0.6, 0.6) } else { disabled_text_color },
-                        width: 1.0,
-                        radius: 3.0.into(),
-                    },
-                    shadow: iced::Shadow::default(),
-                },
-                if can_toggle { Color::from_rgb(0.2, 0.6, 1.0) } else { disabled_text_color }
-            );
+                // Draw the column title
+                let gap_between = 8.0;
+                let text_x = checkbox_x + checkbox_size + gap_between;  
+                let left_padding = text_x - bounds.x;     
+                let text_clip_width = bounds.width - left_padding - padding_x;
 
-            // Draw checkmark if visible
-            if *visible {
                 renderer.fill_text(
                     iced::advanced::text::Text {
-                        content: String::from("✓"),
-                        bounds: Size::new(checkbox_size, checkbox_size),
-                        size: iced::Pixels(12.0),
+                        content: title.to_owned(),
+                        bounds: Size::new(text_clip_width, item_height),
+                        size: iced::Pixels(14.0),
                         line_height: iced::advanced::text::LineHeight::Relative(1.0),
                         font: renderer.default_font(),
-                        align_x: iced::advanced::text::Alignment::Center,
+                        align_x: iced::advanced::text::Alignment::Left,
                         align_y: iced::alignment::Vertical::Center,
                         wrapping: iced::advanced::text::Wrapping::Word,
-                        shaping: iced::advanced::text::Shaping::Advanced,
+                        shaping: iced::advanced::text::Shaping::Basic,
                     },
-                    Point::new(checkbox_x + 8.0 , checkbox_y + 9.0),
-                    Color::WHITE,
-                    bounds,
+                    Point::new(text_x, y_offset + 14.0),
+                    item_text_color,
+                    content_bounds,
                 );
             }
-
-            // Draw the column title
-            let gap_between = 8.0;
-            let text_x = checkbox_x + checkbox_size + gap_between;  
-            let left_padding = text_x - bounds.x;     
-            let text_clip_width = bounds.width - left_padding - padding_x;
-
-            renderer.fill_text(
-                iced::advanced::text::Text {
-                    content: title.to_owned(),
-                    bounds: Size::new(text_clip_width, item_height),
-                    size: iced::Pixels(14.0),
-                    line_height: iced::advanced::text::LineHeight::Relative(1.0),
-                    font: renderer.default_font(),
-                    align_x: iced::advanced::text::Alignment::Left,
-                    align_y: iced::alignment::Vertical::Center,
-                    wrapping: iced::advanced::text::Wrapping::Word,
-                    shaping: iced::advanced::text::Shaping::Basic,
-                },
-                Point::new(text_x, item_bounds.y + 14.0),
-                item_text_color,
-                bounds,
-            );
 
             y_offset += item_height;
         }
@@ -393,6 +398,7 @@ where
         &self,
         cursor_position: Point,
         menu_bounds: Rectangle,
+        scroll_offset: f32,
         shell: &mut Shell<'_, Message>,
     ) -> bool {
         if cursor_position.x < menu_bounds.x 
@@ -402,12 +408,12 @@ where
             return false;
         }
 
-        let relative_y = cursor_position.y - menu_bounds.y - 8.0;
+        let relative_y = cursor_position.y - menu_bounds.y - 8.0 + scroll_offset;
         let item_height = 30.0;
         let separator_offset = if self.other_columns.is_empty() { 0.0 } else { 6.0 };
         
         if relative_y < item_height {
-            // Clicked on current column - only allow if it can be hidden
+            // Clicked on current column
             if self.can_hide_column(&self.column_id) {
                 if let Some(on_column_visibility) = &self.on_column_visibility {
                     shell.publish((on_column_visibility)(ColumnVisibilityMessage::ToggleColumn(self.column_id.clone())));
@@ -420,11 +426,10 @@ where
             let other_index = (other_column_y / item_height) as usize;
             
             if let Some((id, _, visible)) = self.other_columns.get(other_index) {
-                // Check if this action is allowed
                 let can_toggle = if *visible {
                     self.can_hide_column(id)
                 } else {
-                    true // Can always show hidden columns
+                    true
                 };
 
                 if can_toggle {
@@ -437,6 +442,27 @@ where
         }
 
         false
+    }
+
+    fn get_theme_colors(&self, theme: &Theme) -> ThemeColors {
+        let header_style = theme.header(&self.style);
+        let divider_style = theme.divider(&self.style, false);
+        let divider_hovered_style = theme.divider(&self.style, true);
+        
+        ThemeColors {
+            background: header_style.background.unwrap_or_else(|| Color::from_rgb(0.95, 0.95, 0.95).into()),
+            text: header_style.text_color.unwrap_or_else(|| Color::from_rgb(0.2, 0.2, 0.2)),
+            border: divider_style.border.color,
+            hover_background: divider_hovered_style.background.unwrap_or_else(|| Color::from_rgb(0.9, 0.9, 0.9).into()),
+            disabled_text: Color::scale_alpha(
+                header_style.text_color.unwrap_or_else(|| Color::from_rgb(0.2, 0.2, 0.2)), 
+                0.5
+            ),
+            separator: Color::scale_alpha(
+                header_style.text_color.unwrap_or_else(|| Color::from_rgb(0.2, 0.2, 0.2)), 
+                0.3
+            ),
+        }
     }
 }
 
@@ -494,6 +520,7 @@ where
         viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_mut::<State>();
+        //// let divider_hover_bounds = self.divider_bounds(layout.bounds());
         let divider_hover_bounds = self.divider_hover_bounds(layout.bounds());
 
         // Always update hover state for smooth transitions
@@ -667,6 +694,8 @@ where
                 divider: self,
                 position: state.context_menu_position + translation,
                 tree,
+                scroll_offset: 0.0,
+                needs_scroll: false,
             };
 
             Some(overlay::Element::new(Box::new(menu_overlay)))
@@ -719,6 +748,8 @@ where
     divider: &'a Divider<'a, Message, Theme, Renderer>,
     position: Point,
     tree: &'b mut widget::Tree,
+    scroll_offset: f32,
+    needs_scroll: bool,
 }
 
 impl<'a, 'b, Message, Theme, Renderer> Overlay<Message, Theme, Renderer>
@@ -729,7 +760,8 @@ where
     Theme: style::Catalog,
 {
     fn layout(&mut self, _renderer: &Renderer, bounds: Size) -> layout::Node {
-        let menu_bounds = self.divider.context_menu_bounds(self.position);
+        let (menu_bounds, needs_scroll) = self.divider.context_menu_bounds(self.position, bounds.height);
+        self.needs_scroll = needs_scroll;
         
         // Ensure menu doesn't go off screen
         let adjusted_x = if menu_bounds.x + menu_bounds.width > bounds.width {
@@ -765,9 +797,7 @@ where
                     mouse::Event::ButtonPressed(mouse::Button::Left) => {
                         if let Some(cursor_pos) = cursor.position() {
                             if cursor.is_over(menu_bounds) {
-                                // Handle click inside menu
-                                if self.divider.handle_context_menu_click(cursor_pos, menu_bounds, shell) {
-                                    // Close menu after successful click
+                                if self.divider.handle_context_menu_click(cursor_pos, menu_bounds, self.scroll_offset, shell) {
                                     let state = self.tree.state.downcast_mut::<State>();
                                     state.show_context_menu = false;
                                 }
@@ -776,7 +806,6 @@ where
                                 shell.capture_event();
                                 return;
                             } else {
-                                // Clicked outside menu, close it
                                 let state = self.tree.state.downcast_mut::<State>();
                                 state.show_context_menu = false;
                                 shell.capture_event();
@@ -797,6 +826,20 @@ where
                         // Always capture mouse moves for hover updates
                         shell.invalidate_layout();
                         shell.invalidate_widgets();
+                        return;
+                    }
+                    mouse::Event::WheelScrolled { delta } if self.needs_scroll && cursor.is_over(menu_bounds) => {
+                        match delta {
+                            mouse::ScrollDelta::Lines { y, .. } => {
+                                self.scroll_offset = (self.scroll_offset - y * 30.0).max(0.0);
+                            }
+                            mouse::ScrollDelta::Pixels { y, .. } => {
+                                self.scroll_offset = (self.scroll_offset - y).max(0.0);
+                            }
+                        }
+                        shell.invalidate_layout();
+                        shell.invalidate_widgets();
+                        shell.capture_event();
                         return;
                     }
                     _ => {}
@@ -828,10 +871,20 @@ where
         layout: Layout<'_>,
         cursor: Cursor,
     ) {
-        self.divider.draw_context_menu(renderer, theme, layout.bounds(), cursor);
+        self.divider.draw_context_menu(renderer, theme, layout.bounds(), cursor, self.scroll_offset);
     }
 
     fn is_over(&self, layout: Layout<'_>, _renderer: &Renderer, cursor_position: Point) -> bool {
         layout.bounds().contains(cursor_position)
     }
+}
+
+// Helper struct for theme colors
+struct ThemeColors {
+    background: iced::Background,
+    text: Color,
+    border: Color,
+    hover_background: iced::Background,
+    disabled_text: Color,
+    separator: Color,
 }
